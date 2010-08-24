@@ -5,7 +5,6 @@ require  File.dirname(__FILE__) + '/dbf'
 
 module GeoRuby
   module Shp4r
-    
     #Enumerates all the types of SHP geometries. The MULTIPATCH one is the only one not currently supported by GeoRuby.
     module ShpType
       NULL_SHAPE = 0
@@ -176,9 +175,6 @@ module GeoRuby
           end
           geometry = GeoRuby::SimpleFeatures::MultiLineString.from_line_strings(line_strings)
         when ShpType::POLYGON
-          #TODO : TO CORRECT
-          #does not take into account the possibility that the outer loop could be after the inner loops in the SHP + more than one outer loop
-          #Still sends back a multi polygon (so the correction above won't change what gets sent back)
           @shp.seek(32,IO::SEEK_CUR)
           num_parts, num_points = @shp.read(8).unpack("V2")
           parts =  @shp.read(num_parts * 4).unpack("V" + num_parts.to_s)
@@ -187,10 +183,32 @@ module GeoRuby
             x, y = @shp.read(16).unpack("E2")
             GeoRuby::SimpleFeatures::Point.from_x_y(x,y)
           end
+
           linear_rings = Array.new(num_parts) do |i|
             GeoRuby::SimpleFeatures::LinearRing.from_points(points[(parts[i])...(parts[i+1])])
           end
-          geometry = GeoRuby::SimpleFeatures::MultiPolygon.from_polygons([GeoRuby::SimpleFeatures::Polygon.from_linear_rings(linear_rings)])
+
+          outer, inner = linear_rings.partition { |lr| lr.orientation == :clockwise}
+
+          # Make polygons from the outer rings so we can concatenate
+          # them with inner rings.
+          outer.map! { |ring| GeoRuby::SimpleFeatures::Polygon.from_linear_rings([ring]) }
+
+          # We make the assumption that all vertices of holes are
+          # entirely contained.
+          inner.each do |inner_ring|
+            outer_poly = outer.find { |outer_poly| outer_poly[0].contains_point?(inner_ring[0]) }
+            if outer_poly
+              outer_poly << inner_ring
+            else
+              # TODO - what to do here?  technically the geometry is
+              # not well formed (or our above assumption does not
+              # hold).
+              $stderr.puts "Failed to find polygon for inner ring!"
+            end
+          end
+
+          geometry = GeoRuby::SimpleFeatures::MultiPolygon.from_polygons(outer)
         when ShpType::MULTIPOINT
           @shp.seek(32,IO::SEEK_CUR)
           num_points = @shp.read(4).unpack("V")[0]
