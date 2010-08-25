@@ -16,7 +16,7 @@ module GeoRuby
         x, y = point.x, point.y
         tuples = @points.zip(@points[1..-1] + [@points[0]])
         crossings =
-          tuples.select! do |a, b|
+          tuples.select do |a, b|
             (b.y > y != a.y > y) && (x < (a.x - b.x) * (y - b.y) / (a.y - b.y) + b.x)
           end
 
